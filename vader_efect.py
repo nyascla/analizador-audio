@@ -77,19 +77,19 @@ def vader_effect(audio_array, sample_rate):
     processor.apply_darth_vader_effect()
     return processor.audio_data.astype(np.float32)
 
+if __name__ == "__main__":
+    # 🎤 Grabación, efecto y reproducción
+    DURATION = 4  # segundos
+    FS = 44100    # frecuencia de muestreo
 
-# 🎤 Grabación, efecto y reproducción
-DURATION = 4  # segundos
-FS = 44100    # frecuencia de muestreo
+    print("Grabando...")
+    audio = sd.rec(int(DURATION * FS), samplerate=FS, channels=1, dtype='float32')
+    sd.wait()
 
-print("Grabando...")
-audio = sd.rec(int(DURATION * FS), samplerate=FS, channels=1, dtype='float32')
-sd.wait()
+    print("Aplicando efecto Darth Vader...")
+    vader_audio = vader_effect(audio, FS)
 
-print("Aplicando efecto Darth Vader...")
-vader_audio = vader_effect(audio, FS)
-
-print("Reproduciendo...")
-sd.play(vader_audio, FS)
-sd.wait()
-print("✅ Listo.")
+    print("Reproduciendo...")
+    sd.play(vader_audio, FS)
+    sd.wait()
+    print("✅ Listo.")
