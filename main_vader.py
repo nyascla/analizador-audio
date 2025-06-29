@@ -1,52 +1,104 @@
-import sounddevice as sd
 import numpy as np
-import scipy.signal
+import matplotlib.pyplot as plt
+import pyaudio
+import struct
+from scipy.signal import butter, lfilter
+from scipy.fft import fft
+import soundfile as sf
 
-DURATION = 2
+# ------------------------------
+# Configuración
+# ------------------------------i
+BLOQUE_MUESTRAS = 2048
 FS = 44100
+DURACION = 10  # segundos
+CANAL = 1
+ARCHIVO_SALIDA = "darth_vader_output.wav"
 
-def vader_effect(audio, fs):
-    audio = audio.flatten()
+# ------------------------------
+# Efecto Darth Vader
+# ------------------------------
+def efecto_vader(audio, fs):
+    audio = audio.astype(np.float32)
+    max_abs = np.max(np.abs(audio))
+    if max_abs > 0:
+        audio = audio / max_abs
+    else:
+        audio = audio
 
-    # --- 1. Filtro pasa bajos más agresivo (grave, oscuro)
-    b, a = scipy.signal.butter(6, 300 / (fs / 2), btype='low')
-    filtered = scipy.signal.lfilter(b, a, audio)
+    # Pitch shift simple: repetir muestras para bajar el tono (no introduce tanto ruido como resample)
+    pitch_factor = 0.7  # 0.5 sería una octava, 0.7 es más natural
+    indices = (np.arange(0, len(audio)) * pitch_factor).astype(int)
+    indices = np.clip(indices, 0, len(audio) - 1)
+    pitch_bajo = audio[indices]
+    if len(pitch_bajo) < len(audio):
+        pitch_bajo = np.pad(pitch_bajo, (0, len(audio) - len(pitch_bajo)), mode='constant')
+    else:
+        pitch_bajo = pitch_bajo[:len(audio)]
 
-    # --- 2. Añadir distorsión controlada
-    distorted = np.tanh(filtered * 5)
+    # Filtro pasa bajos suave para quitar ruido agudo
+    b, a = butter(3, 800 / (fs / 2), btype='low')
+    filtrado = lfilter(b, a, pitch_bajo)
 
-    # --- 3. Vibrato (frecuencia modulada tipo Vader)
-    t = np.arange(len(distorted)) / fs
-    vibrato = 5 * np.sin(2 * np.pi * 6 * t)  # vibrato lento y grave
-    modulated = np.interp(
-        np.clip(np.arange(len(distorted)) + vibrato, 0, len(distorted) - 1),
-        np.arange(len(distorted)),
-        distorted
-    )
+    max_vad = np.max(np.abs(filtrado))
+    if max_vad > 0:
+        filtrado = filtrado / max_vad
+    return filtrado.astype(np.float32)
 
-    # --- 4. Eco metálico (tipo comb filter)
-    delay_samples = int(0.03 * fs)
-    comb = np.zeros_like(modulated)
-    comb[delay_samples:] = modulated[:-delay_samples] * 0.6
-    with_echo = modulated + comb
+# ------------------------------
+# Inicializar audio
+# ------------------------------
+p = pyaudio.PyAudio()
+flujo_audio = p.open(format=pyaudio.paInt16,
+                     channels=CANAL,
+                     rate=FS,
+                     input=True,
+                     frames_per_buffer=BLOQUE_MUESTRAS)
+# Nuevo: flujo de salida para reproducir el audio procesado
+flujo_salida = p.open(format=pyaudio.paInt16,
+                      channels=CANAL,
+                      rate=FS,
+                      output=True,
+                      frames_per_buffer=BLOQUE_MUESTRAS)
 
-    # --- 5. Reverberación básica (cola de ecos)
-    decay = 0.5
-    reverb = np.zeros_like(with_echo)
-    for i in range(1, 6):
-        d = delay_samples * i
-        if d < len(reverb):
-            reverb[d:] += with_echo[:-d] * (decay ** i)
+# ------------------------------
+# Inicializar gráficos
+# ------------------------------
+plt.ion()
+figura, (ax1, ax2) = plt.subplots(2, 1)
+x = np.arange(0, BLOQUE_MUESTRAS)
+x_fft = np.linspace(0, FS / 2, BLOQUE_MUESTRAS // 2)
+linea_onda, = ax1.plot(x, np.random.rand(BLOQUE_MUESTRAS))
+linea_fft, = ax2.plot(x_fft, np.random.rand(BLOQUE_MUESTRAS // 2))
+ax1.set_ylim(-32768, 32767)
+ax2.set_ylim(0, 1)
+ax2.set_xlim(20, FS / 2)
 
-    vaderized = with_echo + reverb
+# ------------------------------
+# Captura y procesamiento
+# ------------------------------
+print("Grabando con efecto Darth Vader en tiempo real...")
+bloques_audio = []
+for _ in range(0, int(FS / BLOQUE_MUESTRAS * DURACION)):
+    datos = flujo_audio.read(BLOQUE_MUESTRAS)
+    datos_int = np.array(struct.unpack(str(BLOQUE_MUESTRAS) + 'h', datos))
+    bloques_audio.append(datos_int)
 
-    # --- 6. Normalizar
-    vaderized = vaderized / np.max(np.abs(vaderized))
-    return vaderized.reshape(-1, 1)
+    procesado = efecto_vader(datos_int, FS)
+    # Normalizar y convertir a int16 para reproducir
+    procesado_int16 = np.int16(procesado / np.max(np.abs(procesado)) * 32767)
+    flujo_salida.write(procesado_int16.tobytes())
 
-print("🎤 Grabando...")
-audio = sd.rec(int(DURATION * FS), samplerate=FS, channels=1, dtype='float32')
-sd.wait()
+    magnitud_fft = np.abs(fft(datos_int))[:BLOQUE_MUESTRAS // 2]
+    magnitud_fft = magnitud_fft / np.max(magnitud_fft + 1e-6)
+    vector_frecuencias = np.linspace(0, FS / 2, BLOQUE_MUESTRAS // 2)
+    frecuencia_dominante = vector_frecuencias[np.argmax(magnitud_fft)]
+
+    linea_onda.set_ydata(procesado * 32767)  # Escala para que se vea en el eje
+    linea_fft.set_ydata(magnitud_fft)
+    ax2.set_title(f"Frecuencia dominante: {frecuencia_dominante:.1f} Hz")
+    figura.canvas.draw()
+    figura.canvas.flush_events()
 
 print("🧪 Aplicando efecto Darth Vader...")
 vader_audio = vader_effect(audio, FS)
@@ -54,4 +106,4 @@ vader_audio = vader_effect(audio, FS)
 print("🔊 Reproduciendo...")
 sd.play(vader_audio, FS)
 sd.wait()
-print("Listo.")
+print("✅ Listo.")
