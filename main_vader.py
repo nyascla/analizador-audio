@@ -8,7 +8,7 @@ import soundfile as sf
 
 # ------------------------------
 # Configuración
-# ------------------------------
+# ------------------------------i
 BLOQUE_MUESTRAS = 2048
 FS = 44100
 DURACION = 10  # segundos
