@@ -34,10 +34,10 @@ class AudioProcessing:
         self.audio_data *= level
 
     def vader_effect(self):
-        self.set_audio_speed(0.8)
-        self.set_echo(0.02)
-        self.set_lowpass(2500)
-        self.set_volume(1.2)
+        self.set_audio_speed(0.75) # ligera ralentización (más grave)
+        self.set_echo(0.04)        # eco corto, no muy fuerte
+        self.set_lowpass(500)     # filtro pasa bajos suave, atenúa agudos pero no mucho
+        self.set_volume(1.3)       # volumen ligeramente aumentado para saturación controlada
         max_val = np.max(np.abs(self.audio_data))
         if max_val > 0:
             self.audio_data /= max_val
@@ -45,11 +45,11 @@ class AudioProcessing:
 # ------------------------------
 # Configuración
 # ------------------------------
-BLOQUE_MUESTRAS = 4096
+BLOQUE_MUESTRAS = 16384
 FS = 44100
 DURACION = 10  # segundos
-BUFFER_SIZE = FS  # 1 segundo de audio
-ENERGY_THRESHOLD = 50  # Ajusta según tu micro
+BUFFER_SIZE = FS/2  # 0.5 segundos de audio
+ENERGY_THRESHOLD = 5  
 
 # ------------------------------
 # Inicializar audio

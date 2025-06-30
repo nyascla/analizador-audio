@@ -63,7 +63,7 @@ UMBRAL_ENERGIA = 30  # Umbral de energía para procesar voz
 # Inicializar audio
 # ------------------------------
 p = pyaudio.PyAudio()
-flujo_entrada = p.open(format=pyaudio.paInt16,
+flujo_audio = p.open(format=pyaudio.paInt16,
                        channels=1,
                        rate=FS,
                        input=True,
@@ -92,52 +92,28 @@ plt.tight_layout()
 # ------------------------------
 # Bucle principal: capturar, aplicar efecto y reproducir
 # ------------------------------
-print(" Grabando y aplicando efecto Darth Vader en tiempo real...")
 
-buffer_audio = np.array([], dtype=np.float32)
+
+print(" Grabando y aplicando efecto Darth Vader en tiempo real (bufferizado)...")
 
 try:
     for _ in range(int(FS / BLOQUE_MUESTRAS * DURACION)):
-        datos = flujo_entrada.read(BLOQUE_MUESTRAS, exception_on_overflow=False)
+        datos = flujo_audio.read(BLOQUE_MUESTRAS, exception_on_overflow=False)
         datos_float = np.frombuffer(datos, dtype=np.int16).astype(np.float32)
-        buffer_audio = np.concatenate((buffer_audio, datos_float))
 
-        if len(buffer_audio) >= BUFFER_SIZE:
-            energia = np.mean(np.abs(buffer_audio))
-            if energia > UMBRAL_ENERGIA:
-                procesador = AudioProcessing(buffer_audio, FS)
-                procesador.aplicar_efecto_vader()
-                bloque_vader = procesador.audio_data
-            else:
-                bloque_vader = np.zeros_like(buffer_audio)
+        processor = AudioProcessing(datos_float, FS)
+        processor.vader_effect()
+        bloque_vader = processor.audio_data
 
-            bloque_vader_int16 = np.int16(np.clip(bloque_vader * 32767, -32768, 32767))
+        bloque_vader_int16 = np.int16(np.clip(bloque_vader * 32767, -32768, 32767))
+        flujo_salida.write(bloque_vader_int16.tobytes())
 
-            # Reproduce en bloques
-            for i in range(0, len(bloque_vader_int16), BLOQUE_MUESTRAS):
-                sub_bloque = bloque_vader_int16[i:i+BLOQUE_MUESTRAS]
-                if len(sub_bloque) < BLOQUE_MUESTRAS:
-                    sub_bloque = np.pad(sub_bloque, (0, BLOQUE_MUESTRAS - len(sub_bloque)), mode='constant')
-                flujo_salida.write(sub_bloque.tobytes())
+        magnitud_fft = np.abs(fft(bloque_vader_int16))[:BLOQUE_MUESTRAS // 2]
+        magnitud_fft /= (np.max(magnitud_fft) + 1e-6)
 
-                # Actualiza gráficos
-                magnitud_fft = np.abs(fft(sub_bloque))[:BLOQUE_MUESTRAS // 2]
-                magnitud_fft /= (np.max(magnitud_fft) + 1e-6)
-                linea_onda.set_ydata(sub_bloque)
-                linea_fft.set_ydata(magnitud_fft)
-                plt.pause(0.001)
-
-            buffer_audio = np.array([], dtype=np.float32)
+        linea_onda.set_ydata(bloque_vader_int16)
+        linea_fft.set_ydata(magnitud_fft)
+        plt.pause(0.001)
 
 except KeyboardInterrupt:
     print("\n Grabación interrumpida por el usuario.")
-
-finally:
-    plt.ioff()
-    plt.show()
-    flujo_entrada.stop_stream()
-    flujo_entrada.close()
-    flujo_salida.stop_stream()
-    flujo_salida.close()
-    p.terminate()
-    print(" Proceso terminado.")
