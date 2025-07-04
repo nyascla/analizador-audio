@@ -1,12 +1,13 @@
 import sys 
 import os
 from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QPushButton, QLabel,
-                             QFileDialog, QMessageBox, QGridLayout)
+                             QFileDialog, QMessageBox, QGridLayout, QSizePolicy)
 from PyQt6.QtGui import QPixmap
 from PyQt6.QtCore import Qt
 import sounddevice as sd
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from scipy.io import wavfile
 from scipy.fft import fft, fftfreq
 from scipy.signal import butter, filtfilt
@@ -37,7 +38,7 @@ class MainWindow(QWidget):
         self.btn2.clicked.connect(self.opcion2)
         main_layout.addWidget(self.btn2)
 
-        self.btn3 = QPushButton("3. Detectar nota de piano")
+        self.btn3 = QPushButton("3. Detección de notas y frecuencia fundamental")
         self.btn3.clicked.connect(self.opcion3)
         main_layout.addWidget(self.btn3)
 
@@ -45,11 +46,11 @@ class MainWindow(QWidget):
         self.btnSalir.clicked.connect(self.close)
         main_layout.addWidget(self.btnSalir)
 
-        # Área para mostrar 4 imágenes (espectros y espectrogramas antes y después)
+        # Área para mostrar imágenes o gráficas
         self.imagenes_layout = QGridLayout()
         main_layout.addLayout(self.imagenes_layout)
 
-        # Labels para las imágenes
+        # Labels para las imágenes (para opción 1 y 2)
         self.label_espectro_antes = QLabel("Espectro Antes")
         self.label_espectro_antes.setFixedSize(460, 320)
         self.label_espectro_antes.setStyleSheet("border: 1px solid black;")
@@ -70,12 +71,20 @@ class MainWindow(QWidget):
         self.label_espectrograma_despues.setStyleSheet("border: 1px solid black;")
         self.imagenes_layout.addWidget(self.label_espectrograma_despues, 1, 1)
 
+        # Canvas para mostrar gráfica en opción 3 (inicialmente vacío)
+        self.canvas = None
+
     def limpiar_imagenes(self):
-        """Limpia todas las etiquetas de imagen para ocultarlas."""
+        """Limpia todas las etiquetas de imagen y remueve el canvas si existe."""
         self.label_espectro_antes.clear()
         self.label_espectrograma_antes.clear()
         self.label_espectro_despues.clear()
         self.label_espectrograma_despues.clear()
+        # Quitar canvas si está
+        if self.canvas is not None:
+            self.imagenes_layout.removeWidget(self.canvas)
+            self.canvas.setParent(None)
+            self.canvas = None
 
     def aplicar_efecto_vader(self, audio, fs):
         audio = librosa.effects.pitch_shift(audio, sr=fs, n_steps=-4)
@@ -100,6 +109,8 @@ class MainWindow(QWidget):
         plt.xlabel('Frecuencia (Hz)')
         plt.ylabel('Amplitud')
         plt.grid()
+        plt.xlim(0, fs/2)   # Forzar eje X igual para opciones
+        # Opcional: plt.ylim(0, valor_max) para eje Y fijo si quieres
         plt.tight_layout()
         plt.savefig(f"espectro_{filename}.png")
         plt.close()
@@ -110,8 +121,8 @@ class MainWindow(QWidget):
         plt.title(f'Espectrograma: {etiqueta}')
         plt.xlabel('Tiempo (s)')
         plt.ylabel('Frecuencia (Hz)')
-        cbar = plt.colorbar(im)
-        cbar.set_label('Intensidad (dB)')
+        plt.colorbar(im).set_label('Intensidad (dB)')
+        plt.ylim(0, fs/2)   # Forzar eje Y igual para opciones
         plt.tight_layout()
         plt.savefig(f"espectrograma_{filename}.png")
         plt.close()
@@ -140,28 +151,24 @@ class MainWindow(QWidget):
         return nota, f0_median
 
     def opcion1(self):
-        self.limpiar_imagenes()  # Limpiar imágenes al iniciar opción 1
+        self.limpiar_imagenes()
         self.info_label.setText("Grabando audio...")
         QApplication.processEvents()
         audio = sd.rec(int(DURATION * FS), samplerate=FS, channels=1, dtype='float32')
         sd.wait()
         audio = audio.flatten()
 
-        # Amplificar    
         amplificacion = 4.0
         audio = audio * amplificacion
 
-        # Evitar saturación (normalizar si se pasa del rango)
         max_abs = np.max(np.abs(audio))
         if max_abs > 1:
             audio = audio / max_abs
 
-        # Guardar WAV
         wavfile.write("voz_original.wav", FS, (audio * 32767).astype(np.int16))
         self.info_label.setText("Grabación guardada como 'voz_original.wav'")
         QApplication.processEvents()
 
-        # Guardar y mostrar antes del efecto
         self.guardar_espectro(audio, FS, "voz_original_before", "Original (antes)")
         self.guardar_espectrograma(audio, FS, "voz_original_before", "Original (antes)")
         self.mostrar_imagen("espectro_voz_original_before.png", self.label_espectro_antes)
@@ -172,7 +179,6 @@ class MainWindow(QWidget):
         self.info_label.setText("Efecto Darth Vader aplicado y guardado.")
         QApplication.processEvents()
 
-        # Guardar y mostrar después del efecto
         self.guardar_espectro(audio_vader, FS, "voz_vader_after", "Darth Vader (después)")
         self.guardar_espectrograma(audio_vader, FS, "voz_vader_after", "Darth Vader (después)")
         self.mostrar_imagen("espectro_voz_vader_after.png", self.label_espectro_despues)
@@ -191,7 +197,7 @@ class MainWindow(QWidget):
         self.info_label.setText("Opción 1 finalizada. Elige otra opción.")
 
     def opcion2(self):
-        self.limpiar_imagenes()  # Limpiar imágenes al iniciar opción 2
+        self.limpiar_imagenes()
         filename, _ = QFileDialog.getOpenFileName(self, "Selecciona un archivo WAV", "", "WAV Files (*.wav)")
         if not filename:
             self.info_label.setText("No se seleccionó ningún archivo.")
@@ -214,7 +220,6 @@ class MainWindow(QWidget):
 
             base_name = os.path.splitext(os.path.basename(filename))[0]
 
-            # Guardar y mostrar antes del efecto
             self.guardar_espectro(audio, fs, f"{base_name}_before", "Original (antes)")
             self.guardar_espectrograma(audio, fs, f"{base_name}_before", "Original (antes)")
             self.mostrar_imagen(f"espectro_{base_name}_before.png", self.label_espectro_antes)
@@ -225,7 +230,6 @@ class MainWindow(QWidget):
             self.info_label.setText(f"Efecto Darth Vader aplicado y guardado en {base_name}_vader.wav")
             QApplication.processEvents()
 
-            # Guardar y mostrar después del efecto
             self.guardar_espectro(audio_vader, fs, f"{base_name}_after", "Darth Vader (después)")
             self.guardar_espectrograma(audio_vader, fs, f"{base_name}_after", "Darth Vader (después)")
             self.mostrar_imagen(f"espectro_{base_name}_after.png", self.label_espectro_despues)
@@ -237,7 +241,7 @@ class MainWindow(QWidget):
             self.info_label.setText("Error al procesar archivo.")
 
     def opcion3(self):
-        self.limpiar_imagenes()  # Limpiar imágenes previas para opción 3
+        self.limpiar_imagenes()
         filename, _ = QFileDialog.getOpenFileName(self, "Selecciona un archivo WAV para detectar notas", "", "WAV Files (*.wav)")
         if not filename:
             self.info_label.setText("No se seleccionó ningún archivo.")
@@ -319,22 +323,32 @@ class MainWindow(QWidget):
             else:
                 self.info_label.setText("No se detectaron notas útiles.")
 
-            # Mostrar gráfico energía + onsets detectados
-            plt.figure(figsize=(10, 4))
-            plt.plot(energies, label="Energía")
-            plt.axhline(threshold, color='r', linestyle='--', label='Umbral')
+            # Mostrar gráfica integrada en GUI
+            fig, ax = plt.subplots(figsize=(6,2))
+            ax.plot(energies, label="Energía")
+            ax.axhline(threshold, color='r', linestyle='--', label='Umbral')
             inicio_muestras = inicios // step_size
-            plt.vlines(inicio_muestras, 0, 1, color='g', linestyle='--', label='Inicios detectados')
-            plt.title("Energía normalizada por ventana (100 ms)")
-            plt.xlabel("Ventana (cada 50 ms)")
-            plt.ylabel("Energía (normalizada)")
-            plt.legend()
-            plt.tight_layout()
-            plt.show()
+            ax.vlines(inicio_muestras, 0, 1, color='g', linestyle='--', label='Inicios detectados')
+            ax.set_title("Energía normalizada por ventana (100 ms)")
+            ax.set_xlabel("Ventana (cada 50 ms)")
+            ax.set_ylabel("Energía (normalizada)")
+            ax.legend()
+            fig.tight_layout()
+
+            # Crear canvas y añadirlo al layout
+            self.canvas = FigureCanvas(fig)
+            self.canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+            self.canvas.updateGeometry()
+
+            self.imagenes_layout.addWidget(self.canvas, 0, 0, 2, 2)
+
+            # Cerrar la figura original para no duplicar
+            plt.close(fig)
 
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Error al analizar el archivo:\n{e}")
             self.info_label.setText("Error al procesar archivo.")
+
 
 def main():
     app = QApplication(sys.argv)
