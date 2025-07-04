@@ -1,7 +1,7 @@
 import sys 
 import os
 from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QPushButton, QLabel,
-                             QFileDialog, QMessageBox, QHBoxLayout, QGridLayout)
+                             QFileDialog, QMessageBox, QGridLayout)
 from PyQt6.QtGui import QPixmap
 from PyQt6.QtCore import Qt
 import sounddevice as sd
@@ -37,7 +37,7 @@ class MainWindow(QWidget):
         self.btn2.clicked.connect(self.opcion2)
         main_layout.addWidget(self.btn2)
 
-        self.btn3 = QPushButton("3. Detectar nota de piano (pendiente)")
+        self.btn3 = QPushButton("3. Detectar nota de piano")
         self.btn3.clicked.connect(self.opcion3)
         main_layout.addWidget(self.btn3)
 
@@ -69,6 +69,13 @@ class MainWindow(QWidget):
         self.label_espectrograma_despues.setFixedSize(460, 320)
         self.label_espectrograma_despues.setStyleSheet("border: 1px solid black;")
         self.imagenes_layout.addWidget(self.label_espectrograma_despues, 1, 1)
+
+    def limpiar_imagenes(self):
+        """Limpia todas las etiquetas de imagen para ocultarlas."""
+        self.label_espectro_antes.clear()
+        self.label_espectrograma_antes.clear()
+        self.label_espectro_despues.clear()
+        self.label_espectrograma_despues.clear()
 
     def aplicar_efecto_vader(self, audio, fs):
         audio = librosa.effects.pitch_shift(audio, sr=fs, n_steps=-4)
@@ -117,7 +124,23 @@ class MainWindow(QWidget):
         else:
             label.setText("No se encontró la imagen")
 
+    def frecuencia_a_nota_librosa(self, f):
+        if f <= 0:
+            return "Sin nota"
+        return librosa.hz_to_note(f)
+
+    def detectar_nota(self, segmento, Fs):
+        y = segmento.astype(np.float64)
+        f0, voiced_flag, voiced_probs = librosa.pyin(y, fmin=50, fmax=1200, sr=Fs)
+        f0_valid = f0[~np.isnan(f0)]
+        if len(f0_valid) == 0:
+            return "Sin nota", 0
+        f0_median = np.median(f0_valid)
+        nota = self.frecuencia_a_nota_librosa(f0_median)
+        return nota, f0_median
+
     def opcion1(self):
+        self.limpiar_imagenes()  # Limpiar imágenes al iniciar opción 1
         self.info_label.setText("Grabando audio...")
         QApplication.processEvents()
         audio = sd.rec(int(DURATION * FS), samplerate=FS, channels=1, dtype='float32')
@@ -168,6 +191,7 @@ class MainWindow(QWidget):
         self.info_label.setText("Opción 1 finalizada. Elige otra opción.")
 
     def opcion2(self):
+        self.limpiar_imagenes()  # Limpiar imágenes al iniciar opción 2
         filename, _ = QFileDialog.getOpenFileName(self, "Selecciona un archivo WAV", "", "WAV Files (*.wav)")
         if not filename:
             self.info_label.setText("No se seleccionó ningún archivo.")
@@ -213,8 +237,104 @@ class MainWindow(QWidget):
             self.info_label.setText("Error al procesar archivo.")
 
     def opcion3(self):
-        QMessageBox.information(self, "Pendiente", "Funcionalidad de detección de nota pendiente de implementar.")
-        self.info_label.setText("Opción 3 en desarrollo. Elige otra opción.")
+        self.limpiar_imagenes()  # Limpiar imágenes previas para opción 3
+        filename, _ = QFileDialog.getOpenFileName(self, "Selecciona un archivo WAV para detectar notas", "", "WAV Files (*.wav)")
+        if not filename:
+            self.info_label.setText("No se seleccionó ningún archivo.")
+            return
+
+        self.info_label.setText(f"Detectando notas en: {os.path.basename(filename)}")
+        QApplication.processEvents()
+
+        try:
+            Fs, data = wavfile.read(filename)
+
+            if data.dtype == np.int16:
+                audio = data.astype(np.float32) / 32768.0
+            elif data.dtype == np.int32:
+                audio = data.astype(np.float32) / 2147483648.0
+            elif data.dtype == np.uint8:
+                audio = (data.astype(np.float32) - 128) / 128.0
+            else:
+                audio = data.astype(np.float32)
+
+            if audio.ndim > 1:
+                audio = audio[:, 0]
+
+            sd.play(audio, Fs)
+            sd.wait()
+
+            frame_size = int(0.1 * Fs)
+            step_size = int(0.05 * Fs)
+            energies = []
+
+            for i in range(0, len(audio) - frame_size, step_size):
+                window = audio[i:i+frame_size]
+                energies.append(np.sum(window**2))
+            energies = np.array(energies)
+            energies /= np.max(energies)
+
+            threshold = 0.1
+            active = energies > threshold
+            bounds = np.diff(active.astype(int))
+            inicios = np.where(bounds == 1)[0] * step_size
+            finales = np.where(bounds == -1)[0] * step_size
+
+            if len(finales) == 0 or (len(inicios) > 0 and inicios[0] > finales[0]):
+                pass
+            while len(finales) < len(inicios):
+                finales = np.append(finales, len(audio))
+
+            notas_previas = []
+            umbral_tiempo = 0.3
+            mensaje = ""
+            contador = 0
+
+            for ini, fin in zip(inicios, finales):
+                segmento = audio[ini:fin]
+                dur = (fin - ini) / Fs
+                energia_segmento = np.sum(segmento**2)
+
+                if dur < 0.15 and energia_segmento < 0.01:
+                    continue
+                elif dur < 0.1:
+                    continue
+                if len(segmento) < int(0.05 * Fs):
+                    continue
+
+                nota, freq = self.detectar_nota(segmento, Fs)
+                if nota == "Sin nota":
+                    continue
+
+                if notas_previas and nota == notas_previas[-1][0] and (ini / Fs - notas_previas[-1][2]) < umbral_tiempo:
+                    continue
+
+                contador += 1
+                notas_previas.append((nota, freq, fin / Fs))
+                mensaje += f"Nota {contador}: {nota} — {freq:.1f} Hz — duración {dur:.2f}s\n"
+                print(f"Nota {contador}: {nota} — {freq:.1f} Hz — duración {dur:.2f}s")
+
+            if mensaje:
+                self.info_label.setText("Notas detectadas:\n" + mensaje)
+            else:
+                self.info_label.setText("No se detectaron notas útiles.")
+
+            # Mostrar gráfico energía + onsets detectados
+            plt.figure(figsize=(10, 4))
+            plt.plot(energies, label="Energía")
+            plt.axhline(threshold, color='r', linestyle='--', label='Umbral')
+            inicio_muestras = inicios // step_size
+            plt.vlines(inicio_muestras, 0, 1, color='g', linestyle='--', label='Inicios detectados')
+            plt.title("Energía normalizada por ventana (100 ms)")
+            plt.xlabel("Ventana (cada 50 ms)")
+            plt.ylabel("Energía (normalizada)")
+            plt.legend()
+            plt.tight_layout()
+            plt.show()
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Error al analizar el archivo:\n{e}")
+            self.info_label.setText("Error al procesar archivo.")
 
 def main():
     app = QApplication(sys.argv)
@@ -223,4 +343,4 @@ def main():
     sys.exit(app.exec())
 
 if __name__ == "__main__":
-    main() 
+    main()

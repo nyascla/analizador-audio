@@ -102,15 +102,25 @@ contador = 0
 for ini, fin in zip(inicios, finales):
     segmento = audio_float[ini:fin]
     dur = (fin - ini) / Fs
-    if dur < 0.3:  # Ignorar segmentos < 300 ms
-        print(f"Segmento descartado por corto: duración {dur:.2f}s")
+    energia_segmento = np.sum(segmento**2)
+
+    if dur < 0.15 and energia_segmento < 0.01:
+        print(f"Segmento descartado por corto y débil: duración {dur:.2f}s")
+        continue
+    elif dur < 0.1:
+        print(f"Segmento descartado por muy corto: duración {dur:.2f}s")
         continue
     if len(segmento) < int(0.05 * Fs):
         continue  # Ignorar segmentos muy cortos (<50ms)
+
     nota, freq = detectar_nota(segmento, Fs)
+    if nota == "Sin nota":
+        continue  # Ignorar segmentos sin nota identificable
+
     # Evitar repeticiones muy próximas
     if notas_previas and nota == notas_previas[-1][0] and (ini / Fs - notas_previas[-1][2]) < umbral_tiempo:
         continue
+
     contador += 1
     notas_previas.append((nota, freq, fin / Fs))
     print(f"Nota {contador}: {nota} — {freq:.1f} Hz — duración {dur:.2f}s")
