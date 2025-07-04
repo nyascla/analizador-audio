@@ -10,7 +10,7 @@ import soundfile as sf
 # Configuración
 # ------------------------------i
 BLOQUE_MUESTRAS = 4096
-FS = 44100
+FS = 48000
 DURACION = 10  # segundos
 CANAL = 1
 ARCHIVO_SALIDA = "darth_vader_output.wav"

@@ -1,4 +1,4 @@
-import sys
+import sys 
 import os
 from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QPushButton, QLabel,
                              QFileDialog, QMessageBox, QHBoxLayout, QGridLayout)
@@ -124,6 +124,16 @@ class MainWindow(QWidget):
         sd.wait()
         audio = audio.flatten()
 
+        # Amplificar    
+        amplificacion = 4.0
+        audio = audio * amplificacion
+
+        # Evitar saturación (normalizar si se pasa del rango)
+        max_abs = np.max(np.abs(audio))
+        if max_abs > 1:
+            audio = audio / max_abs
+
+        # Guardar WAV
         wavfile.write("voz_original.wav", FS, (audio * 32767).astype(np.int16))
         self.info_label.setText("Grabación guardada como 'voz_original.wav'")
         QApplication.processEvents()
@@ -213,4 +223,4 @@ def main():
     sys.exit(app.exec())
 
 if __name__ == "__main__":
-    main()
+    main() 
